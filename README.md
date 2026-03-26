@@ -44,10 +44,10 @@ This project introduces an autonomous AI agent that:
 ## 📁 Project Structure
 
 understand-anything/
-├── agents/          # AI agents (scanner, analyzer, tour builder)
-├── skills/          # Slash command skill definitions
-├── src/             # Core source code
-├── packages/        # Shared packages and utilities
+├── agents/          
+├── skills/         
+├── src/            
+├── packages/        
 └── README.md
 
 ## 🔄 Workflow
