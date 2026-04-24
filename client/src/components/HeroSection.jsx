@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function HeroSection({ onAnalyze, error }) {
+export default function HeroSection({ onAnalyze, onLogout, error, user }) {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -28,6 +28,15 @@ export default function HeroSection({ onAnalyze, error }) {
         identify core concepts, and generate beginner-friendly tutorials with
         interactive diagrams.
       </p>
+
+      <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+          Signed in as <strong>{user?.email}</strong>
+        </span>
+        <button type="button" className="btn btn-ghost" onClick={onLogout}>
+          Sign out
+        </button>
+      </div>
 
       {error && (
         <div style={{

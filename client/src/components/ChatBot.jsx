@@ -3,7 +3,18 @@ import ReactMarkdown from 'react-markdown'
 
 const API = '/api'
 
-export default function ChatBot({ repoUrl, codebaseContext, projectName }) {
+const parseApiResponse = async (res) => {
+  const raw = await res.text()
+  if (!raw) return null
+
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+export default function ChatBot({ repoUrl, codebaseContext, projectName, authToken, variant = 'floating' }) {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState([
     { role: 'ai', text: `Hi! I've analyzed **${projectName}**. Ask me anything about the codebase! 🤖` }
@@ -33,12 +44,23 @@ export default function ChatBot({ repoUrl, codebaseContext, projectName }) {
     try {
       const res = await fetch(`${API}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({ message: userMsg, repoUrl, codebaseContext }),
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error)
-      setMessages(prev => [...prev, { role: 'ai', text: json.response }])
+      const json = await parseApiResponse(res)
+      if (!res.ok) {
+        throw new Error(json?.error || `Chat request failed (${res.status})`)
+      }
+
+      const responseText = json?.response
+      if (!responseText) {
+        throw new Error('Server returned an invalid chat response')
+      }
+
+      setMessages(prev => [...prev, { role: 'ai', text: responseText }])
     } catch (err) {
       setMessages(prev => [...prev, { role: 'ai', text: `Sorry, I encountered an error: ${err.message}` }])
     } finally {
@@ -51,22 +73,13 @@ export default function ChatBot({ repoUrl, codebaseContext, projectName }) {
     sendMessage(input)
   }
 
-  return (
-    <>
-      <button
-        className={`chat-toggle ${!open ? 'has-dot' : ''}`}
-        onClick={() => setOpen(!open)}
-        id="chat-toggle-btn"
-        title="AI Assistant"
-      >
-        {open ? '✕' : '💬'}
-      </button>
-
-      {open && (
-        <div className="chat-panel glass">
+  const panel = (
+    <div className={`chat-panel glass ${variant === 'embedded' ? 'chat-panel-embedded' : ''}`}>
           <div className="chat-header">
             <h3>🤖 AI Assistant — {projectName}</h3>
-            <button className="chat-close" onClick={() => setOpen(false)}>×</button>
+            {variant !== 'embedded' && (
+              <button className="chat-close" onClick={() => setOpen(false)}>×</button>
+            )}
           </div>
 
           <div className="chat-messages">
@@ -117,8 +130,22 @@ export default function ChatBot({ repoUrl, codebaseContext, projectName }) {
               ➤
             </button>
           </form>
-        </div>
-      )}
+    </div>
+  )
+
+  if (variant === 'embedded') return panel
+
+  return (
+    <>
+      <button
+        className={`chat-toggle ${!open ? 'has-dot' : ''}`}
+        onClick={() => setOpen(!open)}
+        id="chat-toggle-btn"
+        title="AI Assistant"
+      >
+        {open ? '✕' : '💬'}
+      </button>
+      {open && panel}
     </>
   )
 }

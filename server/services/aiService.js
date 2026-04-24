@@ -124,12 +124,12 @@ async function identifyAbstractions(files, projectName, onProgress) {
   if (onProgress) onProgress("Identifying core abstractions...");
 
   // Limit files and truncate content aggressively for small token budgets
-  const maxFiles = Math.min(files.length, 15);
+  const maxFiles = Math.min(files.length, 10);
   let context = "";
   const fileInfo = [];
   for (let i = 0; i < maxFiles; i++) {
     const f = files[i];
-    context += `--- ${i}: ${f.path} ---\n${f.content.substring(0, 800)}\n\n`;
+    context += `--- ${i}: ${f.path} ---\n${f.content.substring(0, 500)}\n\n`;
     fileInfo.push(`- ${i} # ${f.path}`);
   }
 
@@ -193,10 +193,10 @@ async function analyzeRelationships(abstractions, files, projectName, onProgress
   abstractions.forEach((a) => a.files.forEach((f) => allIndices.add(f)));
 
   context += "\nFile Snippets:\n";
-  const sortedIndices = [...allIndices].sort((a, b) => a - b).slice(0, 10);
+  const sortedIndices = [...allIndices].sort((a, b) => a - b).slice(0, 8);
   for (const idx of sortedIndices) {
     if (idx < files.length) {
-      context += `--- ${idx}: ${files[idx].path} ---\n${files[idx].content.substring(0, 500)}\n\n`;
+      context += `--- ${idx}: ${files[idx].path} ---\n${files[idx].content.substring(0, 320)}\n\n`;
     }
   }
 
@@ -325,7 +325,7 @@ async function writeChapter(chapterNum, abstraction, files, projectName, allChap
   let fileContext = "";
   for (const idx of abstraction.files.slice(0, 3)) {
     if (idx < files.length) {
-      fileContext += `--- ${files[idx].path} ---\n${files[idx].content.substring(0, 1500)}\n\n`;
+      fileContext += `--- ${files[idx].path} ---\n${files[idx].content.substring(0, 700)}\n\n`;
     }
   }
 
@@ -333,7 +333,8 @@ async function writeChapter(chapterNum, abstraction, files, projectName, allChap
   const chapterListing = allChapters.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
 
   // Previous chapters context
-  const prevContext = prevSummaries.length > 0 ? prevSummaries.join("\n---\n") : "This is the first chapter.";
+  const recentSummaries = prevSummaries.slice(-2);
+  const prevContext = recentSummaries.length > 0 ? recentSummaries.join("\n---\n") : "This is the first chapter.";
 
   // Navigation info
   const prevChapter = chapterNum > 1 ? allChapters[chapterNum - 2] : null;
@@ -410,14 +411,18 @@ function generateMermaidDiagram(abstractions, relationships) {
 // ─── Step 6: Chat with Codebase ───
 async function chatWithCodebase(message, codebaseContext) {
   const prompt = `
-You are an expert AI tutor helping a user understand a codebase. You have analyzed the following codebase and generated tutorials about it.
+You are an expert AI assistant and tutor. You can answer both:
+1) questions about the analyzed codebase, and
+2) general knowledge/programming questions like a normal assistant.
+
+When the question is related to the codebase, prioritize the context below and explain clearly with practical examples.
+When the question is general and not related to the codebase, still answer fully and helpfully (do NOT refuse or redirect).
 
 ${codebaseContext}
 
 The user asks: "${message}"
 
 Please provide a clear, beginner-friendly answer. Use code examples if helpful. Use markdown formatting.
-If the question is not related to the codebase, politely redirect the conversation back to the codebase.
 
 Answer:`;
 
@@ -425,79 +430,82 @@ Answer:`;
 }
 
 // ─── Full Pipeline ───
-async function runFullAnalysis(repoUrl, token, onProgress) {
-  const { fetchRepoFiles } = require("./githubService");
-
-  // Step 1: Fetch
-  if (onProgress) onProgress({ step: 1, total: 5, message: "Fetching repository files..." });
-  const { projectName, files } = await fetchRepoFiles(repoUrl, token, (msg) => {
-    if (onProgress) onProgress({ step: 1, total: 5, message: msg });
-  });
-
-  if (onProgress) onProgress({ step: 1, total: 5, message: `Fetched ${files.length} files from ${projectName}` });
-
-  // Step 2: Identify Abstractions
-  if (onProgress) onProgress({ step: 2, total: 5, message: "Identifying core abstractions..." });
-  const abstractions = await identifyAbstractions(files, projectName, (msg) => {
-    if (onProgress) onProgress({ step: 2, total: 5, message: msg });
-  });
-
-  // Step 3: Analyze Relationships
-  if (onProgress) onProgress({ step: 3, total: 5, message: "Analyzing relationships..." });
-  const relationships = await analyzeRelationships(abstractions, files, projectName, (msg) => {
-    if (onProgress) onProgress({ step: 3, total: 5, message: msg });
-  });
-
-  // Step 4: Order Chapters
-  if (onProgress) onProgress({ step: 4, total: 5, message: "Ordering chapters..." });
-  const chapterOrder = await orderChapters(abstractions, relationships, projectName, (msg) => {
-    if (onProgress) onProgress({ step: 4, total: 5, message: msg });
-  });
-
-  // Step 5: Write Chapters
-  if (onProgress) onProgress({ step: 5, total: 5, message: "Writing tutorial chapters..." });
-
-  const orderedAbstractions = chapterOrder.map((idx) => ({
-    ...abstractions[idx],
-    originalIndex: idx,
-  }));
-
-  const chapters = [];
-  const prevSummaries = [];
-
-  for (let i = 0; i < orderedAbstractions.length; i++) {
-    if (onProgress) {
-      onProgress({ step: 5, total: 5, message: `Writing chapter ${i + 1}/${orderedAbstractions.length}: ${orderedAbstractions[i].name}...` });
-    }
-
-    // Delay between chapters to avoid rate limits
-    if (i > 0) await delay(5000);
-
-    const content = await writeChapter(
-      i + 1,
-      orderedAbstractions[i],
-      files,
-      projectName,
-      orderedAbstractions,
-      prevSummaries
-    );
-
-    chapters.push({
-      number: i + 1,
-      name: orderedAbstractions[i].name,
-      description: orderedAbstractions[i].description,
-      content,
-      files: orderedAbstractions[i].files.map((idx) => files[idx]?.path || `file_${idx}`),
-    });
-
-    prevSummaries.push(content.substring(0, 300));
+async function runFullAnalysisFromFiles(projectName, files, onProgress) {
+  if (!projectName) projectName = "project";
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error("No files provided for analysis");
   }
 
-  // Generate diagram
-  const mermaidDiagram = generateMermaidDiagram(abstractions, relationships);
+  if (onProgress) onProgress({ step: 1, total: 5, message: `Loaded ${files.length} files from ${projectName}` });
 
-  // Build codebase context for chat
-  const codebaseContext = `
+  // Repo metrics for Explorer UI (always compute; even if tutorial steps fail)
+  const { computeRepoMetrics } = require("./repoMetrics");
+  const repoMetrics = computeRepoMetrics(files);
+
+  // Tutorial pipeline (best-effort). If it fails, return Explorer data anyway.
+  try {
+    // Step 2: Identify Abstractions
+    if (onProgress) onProgress({ step: 2, total: 5, message: "Identifying core abstractions..." });
+    const abstractions = await identifyAbstractions(files, projectName, (msg) => {
+      if (onProgress) onProgress({ step: 2, total: 5, message: msg });
+    });
+
+    // Step 3: Analyze Relationships
+    if (onProgress) onProgress({ step: 3, total: 5, message: "Analyzing relationships..." });
+    const relationships = await analyzeRelationships(abstractions, files, projectName, (msg) => {
+      if (onProgress) onProgress({ step: 3, total: 5, message: msg });
+    });
+
+    // Step 4: Order Chapters
+    if (onProgress) onProgress({ step: 4, total: 5, message: "Ordering chapters..." });
+    const chapterOrder = await orderChapters(abstractions, relationships, projectName, (msg) => {
+      if (onProgress) onProgress({ step: 4, total: 5, message: msg });
+    });
+
+    // Step 5: Write Chapters
+    if (onProgress) onProgress({ step: 5, total: 5, message: "Writing tutorial chapters..." });
+
+    const orderedAbstractions = chapterOrder.map((idx) => ({
+      ...abstractions[idx],
+      originalIndex: idx,
+    }));
+
+    const chapters = [];
+    const prevSummaries = [];
+
+    for (let i = 0; i < orderedAbstractions.length; i++) {
+      if (onProgress) {
+        onProgress({ step: 5, total: 5, message: `Writing chapter ${i + 1}/${orderedAbstractions.length}: ${orderedAbstractions[i].name}...` });
+      }
+
+      // Delay between chapters to avoid rate limits
+      if (i > 0) await delay(5000);
+
+      const content = await writeChapter(
+        i + 1,
+        orderedAbstractions[i],
+        files,
+        projectName,
+        orderedAbstractions,
+        prevSummaries
+      );
+
+      chapters.push({
+        number: i + 1,
+        name: orderedAbstractions[i].name,
+        description: orderedAbstractions[i].description,
+        content,
+        files: orderedAbstractions[i].files.map((idx) => files[idx]?.path || `file_${idx}`),
+      });
+
+      prevSummaries.push(content.substring(0, 300));
+    }
+
+    // Generate diagram
+    const mermaidDiagram = generateMermaidDiagram(abstractions, relationships);
+
+    // Build codebase context for chat
+    const codebaseContext = `
 Project: ${projectName}
 Summary: ${relationships.summary}
 
@@ -508,20 +516,86 @@ Chapter Summaries:
 ${chapters.map((c) => `Chapter ${c.number} - ${c.name}: ${c.content.substring(0, 300)}...`).join("\n")}
   `.trim();
 
-  return {
-    projectName,
-    summary: relationships.summary,
-    abstractions: abstractions.map((a) => ({ name: a.name, description: a.description })),
-    relationships: relationships.details,
-    mermaidDiagram,
-    chapters,
-    codebaseContext,
-    fileCount: files.length,
-  };
+    // Build a file content lookup for UI hover previews.
+    const referencedFileIndices = new Set();
+    orderedAbstractions.forEach((abstraction) => {
+      abstraction.files.forEach((idx) => referencedFileIndices.add(idx));
+    });
+
+    const fileContents = {};
+    for (const idx of referencedFileIndices) {
+      const file = files[idx];
+      if (!file || !file.path || typeof file.content !== "string") continue;
+
+      fileContents[file.path] = file.content;
+      const basename = file.path.split("/").pop();
+      if (basename && !fileContents[basename]) {
+        fileContents[basename] = file.content;
+      }
+    }
+
+    return {
+      projectName,
+      summary: relationships.summary,
+      abstractions: abstractions.map((a) => ({ name: a.name, description: a.description })),
+      relationships: relationships.details,
+      mermaidDiagram,
+      chapters,
+      fileContents,
+      filesIndex: repoMetrics.filesIndex,
+      externalDeps: repoMetrics.externalDeps,
+      metrics: repoMetrics.metrics,
+      graph: repoMetrics.graph,
+      codebaseContext,
+      fileCount: files.length,
+    };
+  } catch (error) {
+    const warning = `Tutorial generation skipped: ${error.message || "Unknown error"}`;
+    console.warn(`[AI] ${warning}`);
+
+    const codebaseContext = `
+Project: ${projectName}
+Summary: Tutorials could not be generated for this repository, but explorer metrics are available.
+
+Files (sample):
+${repoMetrics.filesIndex.slice(0, 50).map((f) => `- ${f.path}`).join("\n")}
+    `.trim();
+
+    return {
+      projectName,
+      summary: "Tutorials could not be generated for this repository, but you can still explore files and the graph.",
+      abstractions: [],
+      relationships: [],
+      mermaidDiagram: "",
+      chapters: [],
+      fileContents: {},
+      filesIndex: repoMetrics.filesIndex,
+      externalDeps: repoMetrics.externalDeps,
+      metrics: repoMetrics.metrics,
+      graph: repoMetrics.graph,
+      codebaseContext,
+      fileCount: files.length,
+      analysisWarning: warning,
+    };
+  }
+}
+
+async function runFullAnalysis(repoUrl, token, onProgress) {
+  const { fetchRepoFiles } = require("./githubService");
+
+  // Step 1: Fetch
+  if (onProgress) onProgress({ step: 1, total: 5, message: "Fetching repository files..." });
+  const { projectName, files } = await fetchRepoFiles(repoUrl, token, (msg) => {
+    if (onProgress) onProgress({ step: 1, total: 5, message: msg });
+  });
+
+  if (onProgress) onProgress({ step: 1, total: 5, message: `Fetched ${files.length} files from ${projectName}` });
+  return await runFullAnalysisFromFiles(projectName, files, onProgress);
 }
 
 module.exports = {
   runFullAnalysis,
+  runFullAnalysisFromFiles,
   chatWithCodebase,
   identifyAbstractions,
   analyzeRelationships,

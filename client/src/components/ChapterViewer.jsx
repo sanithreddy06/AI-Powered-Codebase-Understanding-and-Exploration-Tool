@@ -1,6 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import mermaid from 'mermaid'
 
 function MermaidBlock({ code }) {
@@ -24,12 +24,18 @@ function MermaidBlock({ code }) {
   return <div ref={ref} className="diagram-container" style={{ margin: '16px 0' }} />
 }
 
-export default function ChapterViewer({ chapter, chapters, currentIndex, onNavigate }) {
+function isLikelyFileName(value) {
+  return /^[\w./-]+\.[a-z0-9]{1,8}$/i.test(value)
+}
+
+export default function ChapterViewer({ chapter, chapters, currentIndex, onNavigate, fileContents = {} }) {
   const contentRef = useRef(null)
+  const [hoveredFile, setHoveredFile] = useState(null)
 
   useEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0
     window.scrollTo({ top: 0 })
+    setHoveredFile(null)
   }, [currentIndex])
 
   if (!chapter) return null
@@ -58,12 +64,53 @@ export default function ChapterViewer({ chapter, chapters, currentIndex, onNavig
               )
             }
 
+            const codeText = String(children).trim()
+            const fullCode = fileContents[codeText]
+
+            if (isLikelyFileName(codeText) && fullCode) {
+              return (
+                <button
+                  type="button"
+                  className="file-chip"
+                  onMouseEnter={(e) => {
+                    setHoveredFile({
+                      name: codeText,
+                      content: fullCode,
+                      x: e.clientX,
+                      y: e.clientY,
+                    })
+                  }}
+                  onMouseMove={(e) => {
+                    setHoveredFile((prev) =>
+                      prev ? { ...prev, x: e.clientX, y: e.clientY } : prev
+                    )
+                  }}
+                  onMouseLeave={() => setHoveredFile(null)}
+                >
+                  {codeText}
+                </button>
+              )
+            }
+
             return <code className={className} {...props}>{children}</code>
           }
         }}
       >
         {chapter.content}
       </ReactMarkdown>
+
+      {hoveredFile && (
+        <div
+          className="file-hover-preview"
+          style={{
+            left: `${Math.min(hoveredFile.x + 16, window.innerWidth - 560)}px`,
+            top: `${Math.min(hoveredFile.y + 16, window.innerHeight - 420)}px`,
+          }}
+        >
+          <div className="file-hover-title">{hoveredFile.name}</div>
+          <pre>{hoveredFile.content}</pre>
+        </div>
+      )}
 
       <div className="chapter-nav">
         {prev ? (

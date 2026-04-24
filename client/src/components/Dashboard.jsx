@@ -5,7 +5,7 @@ import ChapterViewer from './ChapterViewer'
 export default function Dashboard({ data, onBack }) {
   const [activeView, setActiveView] = useState('overview') // 'overview' | index number
 
-  const { projectName, summary, abstractions, mermaidDiagram, chapters, fileCount, relationships } = data
+  const { projectName, summary, abstractions, mermaidDiagram, chapters, fileCount, relationships, fileContents } = data
 
   return (
     <div className="dashboard">
@@ -65,6 +65,7 @@ export default function Dashboard({ data, onBack }) {
           <ChapterViewer
             chapter={chapters[activeView]}
             chapters={chapters}
+            fileContents={fileContents}
             currentIndex={activeView}
             onNavigate={(i) => setActiveView(i)}
           />

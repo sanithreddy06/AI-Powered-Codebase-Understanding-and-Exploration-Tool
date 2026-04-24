@@ -113,4 +113,11 @@ async function fetchRepoFiles(repoUrl, token = null, onProgress = null) {
   return { projectName, files };
 }
 
-module.exports = { fetchRepoFiles, parseRepoUrl };
+module.exports = {
+  fetchRepoFiles,
+  parseRepoUrl,
+  shouldIncludeFile,
+  DEFAULT_EXCLUDE,
+  DEFAULT_INCLUDE,
+  MAX_FILE_SIZE,
+};

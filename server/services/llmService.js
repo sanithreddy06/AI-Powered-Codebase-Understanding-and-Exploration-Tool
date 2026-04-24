@@ -52,23 +52,36 @@ function httpsPost(url, headers, body) {
       });
     });
     req.on("error", reject);
-    req.setTimeout(120000, () => { req.destroy(); reject(new Error("Request timeout")); });
+    const timeoutMs = parseInt(process.env.LLM_REQUEST_TIMEOUT_MS || "300000", 10);
+    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error("Request timeout")); });
     req.write(JSON.stringify(body));
     req.end();
   });
 }
 
-async function callOpenAICompatible(prompt, baseUrl, apiKey, model) {
+function compactPrompt(prompt, maxChars = 12000) {
+  const text = String(prompt || "");
+  if (text.length <= maxChars) return text;
+
+  // Keep beginning and ending context, trim the middle.
+  const half = Math.floor((maxChars - 64) / 2);
+  return `${text.slice(0, half)}\n\n[...prompt truncated for token budget...]\n\n${text.slice(-half)}`;
+}
+
+async function callOpenAICompatible(prompt, baseUrl, apiKey, model, options = {}) {
   const url = `${baseUrl.replace(/\/$/, "")}/v1/chat/completions`;
   const headers = {};
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
 
-  console.log(`  [LLM] Using ${model} via ${baseUrl} (max_tokens: 4096)...`);
+  const maxTokens = options.maxTokens ?? parseInt(process.env.LLM_MAX_OUTPUT_TOKENS || "1200", 10);
+  const maxPromptChars = options.maxPromptChars ?? parseInt(process.env.LLM_MAX_PROMPT_CHARS || "12000", 10);
+  const boundedPrompt = compactPrompt(prompt, maxPromptChars);
+  console.log(`  [LLM] Using ${model} via ${baseUrl} (max_tokens: ${maxTokens})...`);
   const result = await httpsPost(url, headers, {
     model,
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: boundedPrompt }],
     temperature: 0.7,
-    max_tokens: 4096,
+    max_tokens: Number.isNaN(maxTokens) ? 1200 : maxTokens,
   });
 
   return result.choices[0].message.content;
@@ -77,6 +90,8 @@ async function callOpenAICompatible(prompt, baseUrl, apiKey, model) {
 // ─── Main Entry Point ───
 async function callLLM(prompt, retries = 4) {
   const provider = (process.env.LLM_PROVIDER || "GEMINI").toUpperCase();
+  const isPayloadError = (msg) =>
+    msg.includes("413") || msg.includes("Request too large") || msg.includes("tokens per minute");
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -93,7 +108,33 @@ async function callLLM(prompt, retries = 4) {
           const apiKey = process.env.GROQ_API_KEY;
           if (!apiKey) throw new Error("GROQ_API_KEY is not set in .env file");
           const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
-          return await callOpenAICompatible(prompt, "https://api.groq.com/openai", apiKey, model);
+
+          try {
+            return await callOpenAICompatible(prompt, "https://api.groq.com/openai", apiKey, model);
+          } catch (groqError) {
+            const msg = groqError.message || "";
+            if (!isPayloadError(msg)) throw groqError;
+
+            // Aggressive fallback attempt on Groq with a much smaller budget.
+            console.warn("  [LLM] Groq token budget exceeded, retrying with compact budget...");
+            try {
+              return await callOpenAICompatible(prompt, "https://api.groq.com/openai", apiKey, model, {
+                maxPromptChars: 4500,
+                maxTokens: 700,
+              });
+            } catch (compactError) {
+              const compactMsg = compactError.message || "";
+              if (!isPayloadError(compactMsg)) throw compactError;
+
+              // Final automatic fallback to Gemini when configured.
+              const geminiKey = process.env.GEMINI_API_KEY;
+              if (geminiKey && geminiKey !== "your_gemini_api_key_here") {
+                console.warn("  [LLM] Falling back to Gemini due to Groq token budget limits...");
+                return await callGemini(compactPrompt(prompt, 9000), geminiKey);
+              }
+              throw compactError;
+            }
+          }
         }
 
         case "OPENAI": {
@@ -116,9 +157,16 @@ async function callLLM(prompt, retries = 4) {
     } catch (error) {
       const msg = error.message || "";
       const isRateLimit = msg.includes("429") || msg.includes("quota") || msg.includes("rate");
+      const isPayloadTooLarge = isPayloadError(msg);
       const delay = isRateLimit ? 15000 * attempt : 3000 * attempt;
 
       console.error(`  [LLM] Attempt ${attempt}/${retries} failed: ${msg.substring(0, 150)}`);
+      if (isPayloadTooLarge) {
+        throw new Error(
+          "Prompt exceeded provider token budget (HTTP 413). " +
+          "Try reducing repository size, switching to GEMINI, or lowering prompt/file limits."
+        );
+      }
       if (attempt === retries) throw error;
 
       console.log(`  [LLM] Retrying in ${delay / 1000}s...`);
