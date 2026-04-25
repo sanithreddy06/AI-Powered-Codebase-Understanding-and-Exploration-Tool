@@ -1,6 +1,123 @@
 const { callGemini } = require("./llmService");
 
 // ─── Helper ───
+function parseJsonSafe(str) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
+
+function pickProjectFactFiles(files) {
+  const byPath = new Map(files.map((f, i) => [f.path, i]));
+
+  const picks = new Set();
+  const addIfPresent = (p) => {
+    const idx = byPath.get(p);
+    if (typeof idx === "number") picks.add(idx);
+  };
+
+  // Common high-signal docs/config/entrypoints
+  addIfPresent("README.md");
+  addIfPresent("readme.md");
+  addIfPresent("package.json");
+  addIfPresent("pnpm-lock.yaml");
+  addIfPresent("yarn.lock");
+  addIfPresent("package-lock.json");
+  addIfPresent("Dockerfile");
+  addIfPresent("docker-compose.yml");
+  addIfPresent("docker-compose.yaml");
+  addIfPresent("Makefile");
+
+  // Entry-ish files (root and src/)
+  for (const p of [
+    "index.js",
+    "index.ts",
+    "main.js",
+    "main.ts",
+    "app.js",
+    "app.ts",
+    "src/index.js",
+    "src/index.ts",
+    "src/main.ts",
+    "src/main.js",
+    "src/app.ts",
+    "src/app.js",
+    "server.js",
+    "server.ts",
+  ]) {
+    addIfPresent(p);
+  }
+
+  // If monorepo, include package.jsons near root
+  files
+    .map((f, i) => ({ i, p: String(f.path || "") }))
+    .filter(({ p }) => /(^|\/)package\.json$/i.test(p) && p.split("/").length <= 3)
+    .slice(0, 6)
+    .forEach(({ i }) => picks.add(i));
+
+  return Array.from(picks);
+}
+
+function buildProjectFacts(files, projectName) {
+  const importantIdxs = pickProjectFactFiles(files);
+  const importantFiles = importantIdxs.map((i) => files[i]).filter(Boolean);
+
+  const readme = importantFiles.find((f) => /^readme\.md$/i.test(f.path));
+  const rootPkg = importantFiles.find((f) => f.path === "package.json");
+  const pkgJson = rootPkg ? parseJsonSafe(rootPkg.content) : null;
+
+  const scripts = pkgJson?.scripts && typeof pkgJson.scripts === "object" ? pkgJson.scripts : null;
+  const deps = {
+    dependencies: pkgJson?.dependencies || null,
+    devDependencies: pkgJson?.devDependencies || null,
+  };
+
+  const fileList = importantFiles
+    .map((f) => `- ${f.path}`)
+    .slice(0, 20)
+    .join("\n");
+
+  const readmeExcerpt = readme?.content
+    ? String(readme.content).trim().slice(0, 1800)
+    : "";
+
+  const scriptsExcerpt = scripts
+    ? Object.entries(scripts)
+        .slice(0, 25)
+        .map(([k, v]) => `- ${k}: ${v}`)
+        .join("\n")
+    : "";
+
+  const depsExcerpt = (obj) =>
+    obj && typeof obj === "object"
+      ? Object.keys(obj)
+          .slice(0, 30)
+          .map((k) => `- ${k}`)
+          .join("\n")
+      : "";
+
+  return `
+Project: ${projectName}
+
+High-signal files:
+${fileList || "- (none found)"}
+
+README excerpt:
+${readmeExcerpt || "(no README.md excerpt available)"}
+
+package.json scripts:
+${scriptsExcerpt || "(no package.json scripts found)"}
+
+Top dependencies:
+${depsExcerpt(deps.dependencies) || "(none detected)"} 
+
+Top devDependencies:
+${depsExcerpt(deps.devDependencies) || "(none detected)"}
+  `.trim();
+}
+
 function parseYamlFromResponse(response) {
   const text = String(response || "").trim();
 
@@ -120,20 +237,30 @@ function parseMarkdownAbstractionList(response, files) {
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ─── Step 1: Identify Abstractions ───
-async function identifyAbstractions(files, projectName, onProgress) {
+async function identifyAbstractions(files, projectName, projectFacts, onProgress) {
   if (onProgress) onProgress("Identifying core abstractions...");
 
-  // Limit files and truncate content aggressively for small token budgets
-  const maxFiles = Math.min(files.length, 10);
+  // Limit files and truncate content aggressively for small token budgets,
+  // but prioritize README/package.json/entrypoints instead of the first N files.
+  const preferred = pickProjectFactFiles(files);
+  const fallback = Array.from({ length: Math.min(files.length, 30) }, (_, i) => i);
+  const chosen = Array.from(new Set([...preferred, ...fallback])).slice(0, Math.min(files.length, 14));
+
   let context = "";
   const fileInfo = [];
-  for (let i = 0; i < maxFiles; i++) {
-    const f = files[i];
-    context += `--- ${i}: ${f.path} ---\n${f.content.substring(0, 500)}\n\n`;
-    fileInfo.push(`- ${i} # ${f.path}`);
+  for (const idx of chosen) {
+    const f = files[idx];
+    if (!f) continue;
+    context += `--- ${idx}: ${f.path} ---\n${String(f.content || "").substring(0, 700)}\n\n`;
+    fileInfo.push(`- ${idx} # ${f.path}`);
   }
 
   const prompt = `For project \`${projectName}\`, analyze this codebase and identify the top 5 core abstractions.
+
+Use ONLY the facts from the provided README/scripts/code snippets. If something is not present, say "not found".
+
+Project facts (README/scripts/deps):
+${projectFacts || "(no project facts available)"}
 
 Files:
 ${context}
@@ -318,7 +445,7 @@ Now, provide the YAML output:`;
 }
 
 // ─── Step 4: Write Chapters ───
-async function writeChapter(chapterNum, abstraction, files, projectName, allChapters, prevSummaries, onProgress) {
+async function writeChapter(chapterNum, abstraction, files, projectName, allChapters, prevSummaries, projectFacts, onProgress) {
   if (onProgress) onProgress(`Writing chapter ${chapterNum}: ${abstraction.name}...`);
 
   // Build file context (truncated for token limits)
@@ -343,6 +470,15 @@ async function writeChapter(chapterNum, abstraction, files, projectName, allChap
   const prompt = `
 Write a very beginner-friendly tutorial chapter (in Markdown format) for the project \`${projectName}\` about the concept: "${abstraction.name}". This is Chapter ${chapterNum}.
 
+Grounding rules (must follow):
+- Use ONLY the provided "Project facts" and "Relevant Code Snippets". Do NOT invent APIs, files, scripts, or behavior.
+- When you make a claim about code, mention the file path in backticks (example: \`src/server.ts\`).
+- If you cannot confirm something from the provided context, explicitly say "I couldn't find this in the analyzed files" and give the closest pointers (which files to check).
+- Avoid vague explanations. Prefer concrete steps, and tie each step to the repo (files/scripts) when possible.
+
+Project facts (README/scripts/deps):
+${projectFacts || "(no project facts available)"}
+
 Concept Details:
 - Name: ${abstraction.name}
 - Description: ${abstraction.description}
@@ -359,6 +495,8 @@ ${fileContext || "No specific code snippets provided for this abstraction."}
 Instructions for the chapter:
 - Start with heading: \`# Chapter ${chapterNum}: ${abstraction.name}\`
 ${prevChapter ? `- Begin with a brief transition from the previous chapter "${prevChapter.name}".` : ""}
+- Early in the chapter, include a short section "## What this project does (in plain English)" grounded in README/scripts.
+- Include "## Where to look in the code" with 3-6 bullet points of the most relevant files (use backticks).
 - Begin with a high-level motivation explaining what problem this abstraction solves. Start with a concrete use case.
 - If complex, break it down into key concepts. Explain each one-by-one in a very beginner-friendly way.
 - Give example inputs and outputs for code snippets.
@@ -444,9 +582,11 @@ async function runFullAnalysisFromFiles(projectName, files, onProgress) {
 
   // Tutorial pipeline (best-effort). If it fails, return Explorer data anyway.
   try {
+    const projectFacts = buildProjectFacts(files, projectName);
+
     // Step 2: Identify Abstractions
     if (onProgress) onProgress({ step: 2, total: 5, message: "Identifying core abstractions..." });
-    const abstractions = await identifyAbstractions(files, projectName, (msg) => {
+    const abstractions = await identifyAbstractions(files, projectName, projectFacts, (msg) => {
       if (onProgress) onProgress({ step: 2, total: 5, message: msg });
     });
 
@@ -487,7 +627,8 @@ async function runFullAnalysisFromFiles(projectName, files, onProgress) {
         files,
         projectName,
         orderedAbstractions,
-        prevSummaries
+        prevSummaries,
+        projectFacts
       );
 
       chapters.push({

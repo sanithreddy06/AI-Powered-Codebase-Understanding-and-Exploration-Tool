@@ -2,15 +2,19 @@ const https = require("https");
 const http = require("http");
 
 const DEFAULT_INCLUDE = new Set([
+  // Source
   ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".c", ".cpp", ".h",
-  ".rs", ".rb", ".php", ".swift", ".kt", ".md", ".yml", ".yaml",
+  ".rs", ".rb", ".php", ".swift", ".kt",
+  // Docs/config that define structure
+  ".md", ".yml", ".yaml", ".json", ".toml", ".ini", ".env", ".example",
+  ".sh", ".ps1", ".bat", ".cmd", ".dockerfile",
 ]);
 
 const DEFAULT_EXCLUDE = [
+  // Keep structure accurate: exclude only generated/binary/vendor heavy paths.
   "node_modules/", "dist/", "build/", ".git/", ".github/", ".vscode/",
-  "__pycache__/", "venv/", ".env", "test", "tests/", "docs/", "assets/",
-  "images/", "public/", "static/", "vendor/", "obj/", "bin/", ".next/",
-  "deprecated/", "legacy/", "examples/", "experimental/",
+  "__pycache__/", "venv/", ".next/", "coverage/", ".turbo/", ".cache/",
+  "vendor/", "obj/", "bin/",
 ];
 
 const MAX_FILE_SIZE = 100000; // 100KB
@@ -49,9 +53,29 @@ function shouldIncludeFile(path) {
   for (const excl of DEFAULT_EXCLUDE) {
     if (path.includes(excl)) return false;
   }
-  // Check file extension
-  const ext = "." + path.split(".").pop();
-  return DEFAULT_INCLUDE.has(ext);
+
+  // Always include common repo "structure" files even without extensions
+  const base = path.split("/").pop().toLowerCase();
+  if (
+    base === "readme" ||
+    base === "license" ||
+    base === "makefile" ||
+    base === "dockerfile" ||
+    base === ".env.example" ||
+    base === ".gitignore"
+  ) {
+    return true;
+  }
+
+  // Check file extension (last segment)
+  const parts = base.split(".");
+  if (parts.length < 2) return false;
+  const ext = "." + parts.pop();
+  if (DEFAULT_INCLUDE.has(ext)) return true;
+
+  // Allow multi-part endings like ".env.example"
+  if (base.endsWith(".env.example")) return true;
+  return false;
 }
 
 async function fetchRepoFiles(repoUrl, token = null, onProgress = null) {

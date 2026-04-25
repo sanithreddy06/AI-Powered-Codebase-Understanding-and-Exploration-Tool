@@ -11,11 +11,14 @@ function MermaidBlock({ code }) {
     const render = async () => {
       try {
         ref.current.innerHTML = ''
+        // Validate first; avoids Mermaid's built-in "Syntax error in text" SVG banner.
+        await mermaid.parse(code)
         const id = `mm-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const { svg } = await mermaid.render(id, code)
         if (ref.current) ref.current.innerHTML = svg
       } catch {
-        ref.current.innerHTML = `<pre style="color:var(--text-muted)">${code}</pre>`
+        // Keep the page clean on invalid diagrams.
+        if (ref.current) ref.current.innerHTML = ''
       }
     }
     render()

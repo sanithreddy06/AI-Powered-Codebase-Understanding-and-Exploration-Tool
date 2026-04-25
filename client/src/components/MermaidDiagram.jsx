@@ -31,6 +31,9 @@ export default function MermaidDiagram({ chart }) {
     const render = async () => {
       try {
         containerRef.current.innerHTML = ''
+        // Mermaid can sometimes return an "error SVG" instead of throwing.
+        // Parse first so invalid charts render nothing (no error banner).
+        await mermaid.parse(chart)
         const id = `mermaid-${Date.now()}`
         const { svg } = await mermaid.render(id, chart)
         if (containerRef.current) {
@@ -38,7 +41,8 @@ export default function MermaidDiagram({ chart }) {
         }
       } catch (err) {
         console.warn('Mermaid render error:', err)
-        containerRef.current.innerHTML = `<pre style="color:var(--text-muted);font-size:12px">${chart}</pre>`
+        // Keep the UI clean—don't show Mermaid's error output or raw chart text.
+        if (containerRef.current) containerRef.current.innerHTML = ''
       }
     }
 

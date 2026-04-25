@@ -23,8 +23,8 @@ function parseJsonSafe(str) {
 function parseExternalDeps(files) {
   const deps = new Set();
 
-  const pkg = files.find((f) => f.path === "package.json" || f.path.endsWith("/package.json"));
-  if (pkg) {
+  const pkgs = files.filter((f) => f.path === "package.json" || f.path.endsWith("/package.json"));
+  for (const pkg of pkgs) {
     const json = parseJsonSafe(pkg.content);
     const add = (obj) => {
       if (!obj || typeof obj !== "object") return;
@@ -33,6 +33,7 @@ function parseExternalDeps(files) {
     add(json?.dependencies);
     add(json?.devDependencies);
     add(json?.peerDependencies);
+    add(json?.optionalDependencies);
   }
 
   const req = files.find((f) => f.path === "requirements.txt" || f.path.endsWith("/requirements.txt"));
@@ -48,6 +49,18 @@ function parseExternalDeps(files) {
   }
 
   return Array.from(deps).sort((a, b) => a.localeCompare(b));
+}
+
+function normalizePackageName(spec) {
+  const s = String(spec || "").trim();
+  if (!s) return null;
+  if (s.startsWith("@")) {
+    // @scope/name/extra -> @scope/name
+    const parts = s.split("/");
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : s;
+  }
+  // name/extra -> name
+  return s.split("/")[0];
 }
 
 function buildFileIndex(files) {
@@ -114,6 +127,8 @@ function resolveImportToFile(importPath, fromFile, fileSet) {
 function buildImportEdges(files) {
   const fileSet = new Set(files.map((f) => f.path));
   const edges = [];
+  const externalEdges = [];
+  const externalPkgs = new Set();
 
   for (const f of files) {
     const ext = getExt(f.path);
@@ -144,28 +159,46 @@ function buildImportEdges(files) {
         edges.push({ from: f.path, to: resolved, type: "import" });
         continue;
       }
+
+      // External packages (JS/TS only). Keep python external out for now (module mapping is ambiguous).
+      if ((ext === ".js" || ext === ".jsx" || ext === ".ts" || ext === ".tsx") && !String(imp).startsWith(".")) {
+        const pkg = normalizePackageName(imp);
+        if (pkg) {
+          externalPkgs.add(pkg);
+          externalEdges.push({ from: f.path, to: pkg, type: "external" });
+        }
+      }
     }
   }
 
-  return edges;
+  return { internalEdges: edges, externalEdges, externalPkgs: Array.from(externalPkgs) };
 }
 
 function computeRepoMetrics(files) {
   const filesIndex = buildFileIndex(files);
   const externalDeps = parseExternalDeps(files);
-  const importEdges = buildImportEdges(files);
+  const { internalEdges, externalEdges, externalPkgs } = buildImportEdges(files);
+
+  // Only show external nodes that are (a) imported somewhere, or (b) declared deps.
+  const externalNodeIds = Array.from(new Set([...externalDeps, ...externalPkgs]));
 
   const metrics = {
     files: filesIndex.length,
     functions: filesIndex.reduce((a, f) => a + (f.functionCount || 0), 0),
     classes: filesIndex.reduce((a, f) => a + (f.classCount || 0), 0),
-    edges: importEdges.length,
-    extDeps: externalDeps.length,
+    edges: internalEdges.length + externalEdges.length,
+    extDeps: externalNodeIds.length,
   };
 
   const graph = {
-    nodes: filesIndex.map((f) => ({ id: f.path, type: "file", label: f.path })),
-    edges: importEdges.map((e) => ({ source: e.from, target: e.to, type: e.type })),
+    nodes: [
+      ...filesIndex.map((f) => ({ id: f.path, type: "file", label: f.path })),
+      ...externalNodeIds.map((name) => ({ id: name, type: "external", label: name })),
+    ],
+    edges: [
+      ...internalEdges.map((e) => ({ source: e.from, target: e.to, type: e.type })),
+      ...externalEdges.map((e) => ({ source: e.from, target: e.to, type: e.type })),
+    ],
   };
 
   return { filesIndex, externalDeps, metrics, graph };
