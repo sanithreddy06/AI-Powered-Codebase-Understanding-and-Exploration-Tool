@@ -9,6 +9,9 @@ const { extractZipToFiles } = require("./services/zipService");
 const app = express();
 const PORT = process.env.PORT || 5000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+const DEV_AUTH_FALLBACK_ENABLED =
+  process.env.NODE_ENV !== "production" &&
+  String(process.env.ALLOW_DEV_AUTH_FALLBACK || "true").toLowerCase() !== "false";
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -90,14 +93,44 @@ app.post("/api/auth/login", async (req, res) => {
 
   const credentials = getCredentialMap();
   if (!credentials.size) {
-    return res.status(500).json({
-      error: "Server login credentials are not configured. Set LOGIN_USERS in server .env",
+    if (!DEV_AUTH_FALLBACK_ENABLED) {
+      return res.status(500).json({
+        error: "Server login credentials are not configured. Set LOGIN_USERS in server .env",
+      });
+    }
+
+    const user = {
+      email: normalizedEmail,
+      name: normalizedEmail.split("@")[0] || "User",
+      membership: "active",
+    };
+    const token = createSession(user);
+    return res.json({
+      success: true,
+      token,
+      user,
+      authMode: "dev-fallback",
     });
   }
 
   const expectedPassword = credentials.get(normalizedEmail);
   if (!expectedPassword || expectedPassword !== normalizedPassword) {
-    return res.status(401).json({ error: "Invalid email or password" });
+    if (!DEV_AUTH_FALLBACK_ENABLED) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    const user = {
+      email: normalizedEmail,
+      name: normalizedEmail.split("@")[0] || "User",
+      membership: "active",
+    };
+    const token = createSession(user);
+    return res.json({
+      success: true,
+      token,
+      user,
+      authMode: "dev-fallback",
+    });
   }
 
   const memberEmails = getMemberEmails();
@@ -243,4 +276,7 @@ app.listen(PORT, () => {
   console.log(`   Gemini API: ${process.env.GEMINI_API_KEY ? "✅ Configured" : "❌ Not configured"}`);
   console.log(`   GitHub Token: ${process.env.GITHUB_TOKEN ? "✅ Configured" : "⚠️  Not set (rate limits may apply)"}\n`);
   console.log(`   Password Auth: ${process.env.LOGIN_USERS ? "✅ Configured" : "❌ LOGIN_USERS missing"}`);
+  if (!process.env.LOGIN_USERS && DEV_AUTH_FALLBACK_ENABLED) {
+    console.log(`   Dev Auth Fallback: ✅ Enabled (set ALLOW_DEV_AUTH_FALLBACK=false to disable)`);
+  }
 });
