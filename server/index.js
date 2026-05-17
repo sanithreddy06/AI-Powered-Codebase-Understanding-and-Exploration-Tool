@@ -2,6 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const path = require("path");
+const fs = require("fs");
 const multer = require("multer");
 const { runFullAnalysis, runFullAnalysisFromFiles, chatWithCodebase } = require("./services/aiService");
 const { extractZipToFiles } = require("./services/zipService");
@@ -268,6 +270,20 @@ app.post("/api/chat", authMiddleware, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ─── Production: serve built React app ───
+const clientDist = path.join(__dirname, "..", "client", "dist");
+const serveClient =
+  process.env.SERVE_CLIENT === "true" ||
+  (process.env.SERVE_CLIENT !== "false" && process.env.NODE_ENV === "production");
+
+if (serveClient && fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(clientDist, "index.html"), (err) => (err ? next(err) : undefined));
+  });
+}
 
 // ─── Start Server ───
 app.listen(PORT, () => {

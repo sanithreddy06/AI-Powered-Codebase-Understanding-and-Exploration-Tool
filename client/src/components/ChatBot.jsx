@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-
-const API = '/api'
+import { API } from '../config/api'
 
 const parseApiResponse = async (res) => {
   const raw = await res.text()

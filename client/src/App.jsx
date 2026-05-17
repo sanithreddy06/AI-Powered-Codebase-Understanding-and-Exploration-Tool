@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import './index.css'
 import LoginPage from './components/LoginPage'
 import ExplorerLayout from './components/ExplorerLayout'
-
-const API = 'https://codelens-api-v4or.onrender.com/api'
+import { API } from './config/api'
 
 const parseApiResponse = async (res) => {
   const raw = await res.text()
