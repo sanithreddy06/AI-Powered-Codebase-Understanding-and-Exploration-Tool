@@ -3,7 +3,7 @@ import './index.css'
 import LoginPage from './components/LoginPage'
 import ExplorerLayout from './components/ExplorerLayout'
 
-const API = '/api'
+const API = 'https://codelens-api-v4or.onrender.com/api'
 
 const parseApiResponse = async (res) => {
   const raw = await res.text()
