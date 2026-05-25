@@ -10,5 +10,123 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      (function() {
+  const API_URL = 'https://sai-control-api.onrender.com/api/tracking'; // Update for production
+  
+  // Helper to generate a simple session ID
+  function generateSessionId() {
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  }
+
+  // Get or create session ID
+  let sessionId = sessionStorage.getItem('sai_session_id');
+  if (!sessionId) {
+    sessionId = generateSessionId();
+    sessionStorage.setItem('sai_session_id', sessionId);
+  }
+
+  let subdomain = 'localhost';
+  const hostname = window.location.hostname;
+  
+  if (hostname.includes('saisanithreddy.online')) {
+    // Check if it is the main domain (saisanithreddy.online or www.saisanithreddy.online)
+    if (hostname === 'saisanithreddy.online' || hostname === 'www.saisanithreddy.online') {
+      subdomain = 'main';
+    } else {
+      // Extract the subdomain part (e.g., 'reva' from 'reva.saisanithreddy.online')
+      subdomain = hostname.split('.')[0];
+    }
+  }
+
+  const visitData = {
+    subdomain,
+    sessionId,
+    browser: getBrowser(),
+    os: getOS(),
+    deviceType: getDeviceType(),
+    screenResolution: `${window.screen.width}x${window.screen.height}`,
+    referrer: document.referrer,
+    url: window.location.href,
+  };
+
+  // Send visit data
+  fetch(`${API_URL}/visit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(visitData)
+  }).catch(err => console.error('Tracker Error (Visit):', err));
+
+  // Track Clicks
+  document.addEventListener('click', (e) => {
+    const target = e.target;
+    
+    // Only track clicks on buttons, links, or specific elements
+    if (target.tagName === 'BUTTON' || target.tagName === 'A' || target.closest('button') || target.closest('a')) {
+      const eventData = {
+        subdomain,
+        sessionId,
+        eventType: 'click',
+        elementId: target.id || '',
+        elementText: target.innerText || target.value || 'Icon/Image',
+        customData: {
+          tagName: target.tagName,
+          classes: target.className
+        }
+      };
+
+      fetch(`${API_URL}/event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(eventData)
+      }).catch(err => console.error('Tracker Error (Event):', err));
+    }
+  });
+
+  // Track session duration (Heartbeat every 30s)
+  let sessionStartTime = Date.now();
+  setInterval(() => {
+    const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+    fetch(`${API_URL}/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, duration })
+    }).catch(err => console.error('Tracker Error (Session):', err));
+  }, 30000);
+
+  // Simple parsers for browser, OS, and device
+  function getBrowser() {
+    const ua = navigator.userAgent;
+    if (ua.includes("Firefox")) return "Firefox";
+    if (ua.includes("SamsungBrowser")) return "Samsung Browser";
+    if (ua.includes("Opera") || ua.includes("OPR")) return "Opera";
+    if (ua.includes("Trident")) return "Internet Explorer";
+    if (ua.includes("Edge")) return "Edge";
+    if (ua.includes("Chrome")) return "Chrome";
+    if (ua.includes("Safari")) return "Safari";
+    return "Other";
+  }
+
+  function getOS() {
+    const ua = navigator.userAgent;
+    if (ua.includes("Win")) return "Windows";
+    if (ua.includes("Mac")) return "MacOS";
+    if (ua.includes("X11")) return "UNIX";
+    if (ua.includes("Linux")) return "Linux";
+    if (ua.includes("Android")) return "Android";
+    if (ua.includes("iPhone") || ua.includes("iPad")) return "iOS";
+    return "Unknown";
+  }
+
+  function getDeviceType() {
+    const ua = navigator.userAgent;
+    if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua)) return "tablet";
+    if (/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua)) return "mobile";
+    return "desktop";
+  }
+
+})();
+
+    </script>
   </body>
 </html>
